@@ -27,7 +27,7 @@ class GenBot
     @mild = nil
     @medium = nil
     @hot = nil
-    @sgg
+    @sgg = nil
  
     bot.consumer_key = CONSUMER_KEY
     bot.consumer_secret = CONSUMER_SECRET
