@@ -63,6 +63,10 @@ class GenBot
     end
  
     bot.on_mention do |tweet, meta|
+      mention = File.open('mentions.txt', 'a')
+      mention.puts "#{tweet[:user][:screen_name]}: #{tweet[:text]}"
+      mention.close
+      
       # Avoid infinite reply chains (very small chance of crosstalk)
       next if tweet[:user][:screen_name].downcase.include?(ROBOT_ID) && rand > 0.05
       next if tweet[:user][:screen_name].downcase.include?('bot') && rand > 0.05
