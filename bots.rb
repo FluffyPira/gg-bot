@@ -9,13 +9,20 @@ OATH_TOKEN = "" # oauth token for ebooks account
 OAUTH_TOKEN_SECRET = "" # oauth secret for ebooks account
 
 ROBOT_ID = "book" # Avoid infinite reply chains
-TWITTER_USERNAME = "RealGamer9001" # Ebooks account username
-TEXT_MODEL_NAME = "GamerGate" # This should be the name of the text model
- 
+TWITTER_USERNAME = "" # Ebooks account username
+
+# TEXT MODELS
+TEXT_MODEL_NAME = "GamerGate" # This should be the name of the standard text model
+MILD_MODEL_NAME = "mild" # This is for normal responses
+MEDIUM_MODEL_NAME = "medium" # This is for slightly agigitated responses
+HOT_MODEL_NAME = "hot" # This is for very pissy responses
+STOPGG_MODEL_NAME = "sgg" # This model posts with #stopgamergate 
+
+
 DELAY = 2..30 # Simulated human reply delay range in seconds
 BLACKLIST = ['insomnius', 'upulie'] # Grumpy users to avoid interaction with
 SPECIAL_WORDS = ['ebooks', 'clone', 'singularity', 'world domination']
-TRIGGER_WORDS = ['cunt', 'bot', 'bitch', 'zoe', 'anita', 'tranny', 'shemale', 'faggot', 'fag']
+TRIGGER_WORDS = ['cunt', 'bot', 'bitch', 'zoe', 'anita', 'tranny', 'shemale', 'faggot', 'fag', 'ethics in games journalism']
  
 # Track who we've randomly interacted with globally
 $have_talked = {}
@@ -34,10 +41,10 @@ class GenBot
  
     bot.on_startup do
       @model = Model.load("model/#{modelname}.model")
-      @mild = Model.load("model/mild.model")
-      @medium = Model.load("model/medium.model")
-      @hot = Model.load("model/hot.model")
-      @sgg = Model.load("model/sgg.model")
+      @mild = Model.load("model/#{MILD_MODEL_NAME}.model")
+      @medium = Model.load("model/#{MEDIUM_MODEL_NAME}.model")
+      @hot = Model.load("model/#{HOT_MODEL_NAME}.model")
+      @sgg = Model.load("model/#{STOPGG_MODEL_NAME}.model")
       
       @top100 = @model.keywords.top(100).map(&:to_s).map(&:downcase)
       @top20 = @model.keywords.top(20).map(&:to_s).map(&:downcase)
@@ -68,17 +75,15 @@ class GenBot
  
       if very_interesting || special
         favorite(tweet)
+        # If this bot receieves any of the trigger words via mention, it will block/report the user.
       elsif trigger
         block(tweet)
       end
       
-#      if tweet[:text].include?('debug')
-#        block(tweet)
-#      end
-      
       if rand > 0.95
         hotreply(tweet, meta)
-        block(tweet) if rand < 0.5
+        # Lessened her chance of blocking after getting pissy at interactions
+        block(tweet) if rand < 0.25
       elsif rand < 0.35
         medreply(tweet, meta)
       else
@@ -121,6 +126,7 @@ class GenBot
       elsif interesting
         favorite(tweet) if rand < 0.1
         mildreply(tweet, meta) if rand < 0.05
+        # If a trigger word is mentioned by someone they're following, chance to block user.
       elsif trigger
         block(tweet) if rand < 0.2
         hotreply(tweet, meta) if rand < 0.75
