@@ -64,7 +64,7 @@ class GenBot
  
     bot.on_mention do |tweet, meta|
       mention = File.open('mentions.txt', 'a')
-      mention.puts "#{tweet[:user][:screen_name]}: #{tweet[:text]}"
+      mention.puts "\n#{tweet[:user][:screen_name]}: #{tweet[:text]}"
       mention.close
       
       # Avoid infinite reply chains (very small chance of crosstalk)
