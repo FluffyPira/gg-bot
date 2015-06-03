@@ -1,226 +1,246 @@
-#!/usr/bin/env ruby
- 
 require 'twitter_ebooks'
-include Ebooks
- 
+require 'set'
+
+# This is an example bot definition with event handlers commented out
+# You can define and instantiate as many bots as you like
 CONSUMER_KEY = ""
 CONSUMER_SECRET = ""
-OATH_TOKEN = "" # oauth token for ebooks account
-OAUTH_TOKEN_SECRET = "" # oauth secret for ebooks account
+OAUTH_TOKEN = ""
+OAUTH_TOKEN_SECRET = ""
 
-ROBOT_ID = "book" # Avoid infinite reply chains
-TWITTER_USERNAME = "" # Ebooks account username
+TWITTER_USERNAME = "RealGamer9001" # Ebooks account username
 
-# TEXT MODELS
-TEXT_MODEL_NAME = "GamerGate" # This should be the name of the standard text model
-MILD_MODEL_NAME = "mild" # This is for normal responses
-MEDIUM_MODEL_NAME = "medium" # This is for slightly agigitated responses
-HOT_MODEL_NAME = "hot" # This is for very pissy responses
-STOPGG_MODEL_NAME = "sgg" # This model posts with #stopgamergate 
+BLACKLIST = ['kylelehk', 'friedrichsays', 'Sudieofna', 'tnietzschequote', 'NerdsOnPeriod', 'FSR', 'BafflingQuotes', 'Obey_Nxme']
+TRIGGER_WORDS = ['tranny', 'shemale', 'cunt', 'bitch', 'pussy', 'faggot', 'nigger']
 
 
-DELAY = 2..30 # Simulated human reply delay range in seconds
-BLACKLIST = ['insomnius', 'upulie'] # Grumpy users to avoid interaction with
-SPECIAL_WORDS = ['ebooks', 'clone', 'singularity', 'world domination']
-TRIGGER_WORDS = ['cunt', 'bot', 'bitch', 'zoe', 'anita', 'tranny', 'shemale', 'faggot', 'fag', 'ethics in games journalism']
- 
-# Track who we've randomly interacted with globally
-$have_talked = {}
- 
-class GenBot
-  def initialize(bot, modelname)
-    @bot = bot
-    @model = nil
-    @mild = nil
-    @medium = nil
-    @hot = nil
-    @sgg = nil
- 
-    bot.consumer_key = CONSUMER_KEY
-    bot.consumer_secret = CONSUMER_SECRET
- 
-    bot.on_startup do
-      @model = Model.load("model/#{modelname}.model")
-      @mild = Model.load("model/#{MILD_MODEL_NAME}.model")
-      @medium = Model.load("model/#{MEDIUM_MODEL_NAME}.model")
-      @hot = Model.load("model/#{HOT_MODEL_NAME}.model")
-      @sgg = Model.load("model/#{STOPGG_MODEL_NAME}.model")
-      
-      @top100 = @model.keywords.top(100).map(&:to_s).map(&:downcase)
-      @top20 = @model.keywords.top(20).map(&:to_s).map(&:downcase)
+DELAY = 15..45
+
+# Information about a particular Twitter user we know
+class UserInfo
+  attr_reader :username
+  # @return [Integer] how many times we can pester this user unprompted
+  attr_accessor :pesters_left
+  # @param username [String]
+  def initialize(username)
+    @username = username
+    @pesters_left = 3
+  end
+
+end
+
+class CloneBot < Ebooks::Bot
+  attr_accessor :original, :model, :model_path
+  def configure
+    # Configuration for all CloneBots
+    self.consumer_key = CONSUMER_KEY
+    self.consumer_secret = CONSUMER_SECRET
+    self.blacklist = ['kylelehk', 'friedrichsays', 'Sudieofna', 'tnietzschequote', 'NerdsOnPeriod', 'FSR', 'BafflingQuotes', 'Obey_Nxme']
+    self.delay_range = DELAY
+    @userinfo = {}
+  end
+
+  def top100; @top100 ||= model.keywords.take(100); end
+
+  def top20; @top20 ||= model.keywords.take(20); end
+
+  def on_startup
+    # UNCOMMENT THESE TWO TO BUILD INITIAL def def CORPUS
+    # Pira, eventually turn this into a 2nd function plx
+    # make_corpus("recent","GamerGate",3500)
+    # make_corpus("popular","GamerGate",150)
+    
+    load_model!
+
+    @pics = (Dir.entries("pictures/") - %w[.. . .DS_Store]).sort()
+    log @pics.take(5) # poll for consistency and tracking purposes.
+    @status_count = twitter.user.statuses_count
+
+    prune_following
+    
+    post_tweet
+    
+    # search("recent","GamerGate",2)
+
+    posttime = rand(1800..3600)
+    puts "#{posttime} between tweets"
+    
+    scheduler.every "#{posttime}" do
+      # Each day at midnight, post a single tweet
+      post_tweet
     end
- 
-    bot.on_message do |dm|
-      bot.delay DELAY do
-        bot.reply dm, @model.make_response(dm[:text])
-      end
+    
+    scheduler.every "3600" do
+      randnum = rand(1..7)
+      search("recent","GamerGate",randnum)
     end
- 
-    bot.on_follow do |user|
-      bot.delay DELAY do
-        bot.follow user[:screen_name]
-      end
+
+  end
+
+  def on_message(dm)
+    delay do
+      reply(dm, model.make_response(dm.text))
     end
- 
-    bot.on_mention do |tweet, meta|
-      mention = File.open('mentions.txt', 'a')
-      mention.puts "\n#{tweet[:user][:screen_name]}: #{tweet[:text]}"
-      mention.close
-      
-      # Avoid infinite reply chains (very small chance of crosstalk)
-      next if tweet[:user][:screen_name].downcase.include?(ROBOT_ID) && rand > 0.05
-      next if tweet[:user][:screen_name].downcase.include?('bot') && rand > 0.05
- 
-      tokens = NLP.tokenize(tweet[:text])
- 
-      very_interesting = tokens.find_all { |t| @top20.include?(t.downcase) }.length > 2
-      special = tokens.find { |t| SPECIAL_WORDS.include?(t.downcase) }
-      trigger = tokens.find { |t| TRIGGER_WORDS.include?(t.downcase) }
- 
-      if very_interesting || special
-        favorite(tweet)
-        # If this bot receieves any of the trigger words via mention, it will block/report the user.
-      elsif trigger
-        block(tweet)
-      end
-      
-      if rand > 0.95
-        hotreply(tweet, meta)
-        # Lessened her chance of blocking after getting pissy at interactions
-        block(tweet) if rand < 0.25
-      elsif rand < 0.35
-        medreply(tweet, meta)
-      else
-        mildreply(tweet, meta)
-      end
-      
+
+  end
+
+  def on_mention(tweet)
+    # Become more inclined to pester a user when they talk to us
+    userinfo(tweet.user.screen_name).pesters_left += 1
+    delay do
+      reply(tweet, model.make_response(meta(tweet).mentionless, meta(tweet).limit))
     end
- 
-    bot.on_timeline do |tweet, meta|
-      next if tweet[:retweeted_status] || tweet[:text].start_with?('RT')
-      next if BLACKLIST.include?(tweet[:user][:screen_name])
- 
-      tokens = NLP.tokenize(tweet[:text])
- 
-      # We calculate unprompted interaction probability by how well a
-      # tweet matches our keywords
-      interesting = tokens.find { |t| @top100.include?(t.downcase) }
-      very_interesting = tokens.find_all { |t| @top20.include?(t.downcase) }.length > 2
-      special = tokens.find { |t| SPECIAL_WORDS.include?(t.downcase) }
-      trigger = tokens.find { |t| TRIGGER_WORDS.include?(t.downcase) }
- 
-      if special
-        favorite(tweet)
-        favd = true # Mark this tweet as favorited
- 
-        bot.delay DELAY do
-          bot.follow tweet[:user][:screen_name]
-        end
-      end
- 
-      # Any given user will receive at most one random interaction per day
-      # (barring special cases)
-      next if $have_talked[tweet[:user][:screen_name]]
-      $have_talked[tweet[:user][:screen_name]] = true
- 
-      if very_interesting || special
-        favorite(tweet) if (rand < 0.5 && !favd) # Don't fav the tweet if we did earlier
+
+  end
+
+  def on_timeline(tweet)
+    return if tweet.retweeted_status?
+    return unless can_pester?(tweet.user.screen_name)
+    tokens = Ebooks::NLP.tokenize(tweet.text)
+    interesting = tokens.find { |t| top100.include?(t.downcase) }
+    very_interesting = tokens.find_all { |t| top20.include?(t.downcase) }.length > 2
+    delay do
+      if very_interesting
+        favorite(tweet) if rand < 0.5
         retweet(tweet) if rand < 0.1
-        medreply(tweet, meta) if rand < 0.1
+        if rand < 0.01
+          userinfo(tweet.user.screen_name).pesters_left -= 1
+          reply(tweet, model.make_response(meta(tweet).mentionless, meta(tweet).limit))
+        end
+
       elsif interesting
-        favorite(tweet) if rand < 0.1
-        mildreply(tweet, meta) if rand < 0.05
-        # If a trigger word is mentioned by someone they're following, chance to block user.
-      elsif trigger
-        block(tweet) if rand < 0.2
-        hotreply(tweet, meta) if rand < 0.75
+        favorite(tweet) if rand < 0.05
+        if rand < 0.001
+          userinfo(tweet.user.screen_name).pesters_left -= 1
+          reply(tweet, model.make_response(meta(tweet).mentionless, meta(tweet).limit))
+        end
+
       end
+
     end
- 
-    # Schedule a tweet for every 15 minutes
-    bot.scheduler.every '1800' do
-      if rand < 0.1
-        words = @model.make_statement
-      elsif rand < 0.5
-        words = "#StopGamerGate2014 " + @sgg.make_statement
-      else
-        words = @model.make_statement + " #Gamergate"
-      end
- 
-      sing = Dir.entries("pictures/") - %w[.. . .DS_Store]
-      pic = sing.shuffle.sample
-      # We use 2 variables here simply so we can echo the image to log. #{pics.shuffle.sample} below would be valid for a 1 variable method.
-     
-      # this has a 15% chance of tweeting a picture from a specified folder, otherwise it will tweet normally.  
-      if rand < 0.30
-        bot.twitter.update_with_media("#{words}", File.new("pictures/#{pic}"))
-        # A bit hacky of a method, calling up the twitter gem, but it works.
-        bot.log "Tweeting @#{TWITTER_USERNAME}: #{words} #{pic}"    
-      else
-        bot.twitter.update("#{words}")
-        # For consistancy, and because we already have a tweet stored, we use the twitter update method versus @bot.tweet
-        bot.log "Tweeting @#{TWITTER_USERNAME}: #{words}"
-      end
- 
-    end
-   
-    # Clears the have_talked variable daily at midnight.
-    bot.scheduler.cron '0 0 * * *' do
-      $have_talked = {}
-      # This is just for fun and to make her post like a porn star at midnight (lewd).
-      bot.tweet @model.make_statement
-    end
+
   end
- 
-  def hotreply(tweet, meta)
-    resp = @hot.make_response(meta[:mentionless], meta[:limit])
-    @bot.delay DELAY do
-      @bot.reply tweet, meta[:reply_prefix] + resp
-    end
+
+  # Find information we've collected about a user
+  # @param username [String]
+  # @return [Ebooks::UserInfo]
+  def userinfo(username)
+    @userinfo[username] ||= UserInfo.new(username)
   end
-  
-  def medreply(tweet, meta)
-    resp = @medium.make_response(meta[:mentionless], meta[:limit])
-    @bot.delay DELAY do
-      @bot.reply tweet, meta[:reply_prefix] + resp
-    end
+
+  # Check if we're allowed to send unprompted tweets to a user
+  # @param username [String]
+  # @return [Boolean]
+  def can_pester?(username)
+    userinfo(username).pesters_left > 0
   end
-  
-  def mildreply(tweet, meta)
-    resp = @mild.make_response(meta[:mentionless], meta[:limit])
-    @bot.delay DELAY do
-      @bot.reply tweet, meta[:reply_prefix] + resp
-    end
+
+  # Only follow our original user or people who are following our original user
+  # @param user [Twitter::User]
+  def can_follow?(username)
+    @original.nil? || username == @original || twitter.friendship?(username, @original)
   end
- 
+
   def favorite(tweet)
-    @bot.log "Favoriting @#{tweet[:user][:screen_name]}: #{tweet[:text]}"
-    @bot.delay DELAY do
-      @bot.twitter.favorite(tweet[:id])
+    if can_follow?(tweet.user.screen_name)
+      super(tweet)
+    else
+      log "Unfollowing @#{tweet.user.screen_name}"
+      twitter.unfollow(tweet.user.screen_name)
+    end
+
+  end
+
+  def on_follow(user)
+    if can_follow?(user.screen_name)
+      follow(user.screen_name)
+    else
+      log "Not following @#{user.screen_name}"
+    end
+
+  end
+
+  def all_uppercase?(str)
+    str.gsub(/[A-Z]/, '').strip.empty?
+  end
+  
+  def word_cleanup(tweet)
+    words = tweet.text
+    split_words = words.split(' ')
+    split_words =
+    split_words.each_with_index.map do |word, i|
+      words = split_words.reject{|x| TRIGGER_WORDS.include?(x.downcase)}.join(' ')
+      return words
     end
   end
- 
-  def retweet(tweet)
-    @bot.log "Retweeting @#{tweet[:user][:screen_name]}: #{tweet[:text]}"
-    @bot.delay DELAY do
-      @bot.twitter.retweet(tweet[:id])
+
+  def prune_following
+    # Method for pruning followers
+    following = Set.new(twitter.friend_ids.to_a)
+    followers = Set.new(twitter.follower_ids.to_a)
+    to_unfollow = (following - followers).to_a
+    log("Unfollowing user ids: #{to_unfollow}")
+    twitter.unfollow(to_unfollow)
+  end
+
+
+  def next_index()
+    seq = (0..(@pics.size - 1)).to_a
+    seed = @status_count / @pics.size
+    r = Random.new(seed)
+    seq.shuffle!(random: r)
+    res = seq[@status_count % @pics.size]
+    @status_count = @status_count + 1
+    return res
+  end
+
+
+  def make_corpus(type,keyword,size)
+    twitter.search(keyword, result_type: type).take(size).each do |tweet|
+      saved_tweets = File.open('corpus/RealGamer9001.txt', 'a')
+      saved_tweets.puts word_cleanup(tweet) + "\n"
+      saved_tweets.close
     end
+    
+    puts "Built corpus of #{size} #{type} tweets"
+
   end
- 
-  def block(tweet)
-    @bot.log "Blocking and reporting @#{tweet[:user][:screen_name]}"
-    @bot.twitter.block(tweet[:user][:screen_name])
-    @bot.twitter.report_spam(tweet[:user][:screen_name])
+
+
+  def search(type,keyword,size)
+    twitter.search(keyword, result_type: type).take(size).each do |tweet|
+      delay do
+        reply(tweet, model.make_response(meta(tweet).mentionless, meta(tweet).limit))
+      end
+
+    end
+
   end
+
+
+  def post_tweet
+    if rand < 0.25
+      pic = @pics[next_index]
+      pictweet(model.make_statement, "pictures/#{pic}")
+    else
+      tweet(model.make_statement)
+    end
+
+  end
+
+
+  private
+  def load_model!
+    return if @model
+    @model_path ||= "model/#{original}.model"
+    log "Loading model #{model_path}"
+    @model = Ebooks::Model.load(model_path)
+  end
+
 end
- 
-def make_bot(bot, modelname)
-  GenBot.new(bot, modelname)
-end
- 
-Ebooks::Bot.new(TWITTER_USERNAME) do |bot|
-  bot.oauth_token = OATH_TOKEN
-  bot.oauth_token_secret = OAUTH_TOKEN_SECRET
- 
-  make_bot(bot, TEXT_MODEL_NAME)
+
+CloneBot.new(TWITTER_USERNAME) do |bot|
+  bot.access_token = OAUTH_TOKEN
+  bot.access_token_secret = OAUTH_TOKEN_SECRET
+  bot.original = "RealGamer9001"
 end
